@@ -54,11 +54,11 @@ def fake_articles():
 
 
 @pytest.fixture(autouse=True)
-def _reset_executor_cache():
-    """The agent module memoises its AgentExecutor — clear it per test."""
-    agent_module._executor = None
+def _reset_agent_cache():
+    """The agent module memoises its compiled agent — clear it per test."""
+    agent_module._agent = None
     yield
-    agent_module._executor = None
+    agent_module._agent = None
 
 
 @pytest.fixture(autouse=True)
@@ -102,7 +102,7 @@ def test_happy_path(fake_articles):
     assert mock_get.call_count >= 1
     # analyze_sentiment called at least once (ideally 3 — one per article)
     assert mock_post.call_count >= 1
-    # No spurious tool-call explosion (15 is the executor's max_iterations cap)
+    # No spurious tool-call explosion (RECURSION_LIMIT bounds the agent loop)
     assert mock_post.call_count <= len(fake_articles) + 2
 
 
@@ -134,9 +134,9 @@ def test_sentiment_timeout_handled(fake_articles):
         mock_get.return_value  = _news_response(fake_articles[:2])
         mock_post.side_effect  = requests.exceptions.Timeout("timed out")
 
-        # The tool wraps requests.Timeout into a RuntimeError. AgentExecutor's
-        # handle_parsing_errors=True catches tool exceptions and feeds the
-        # error back to the LLM — so run() should still return a string.
+        # The tool wraps requests.Timeout into a ToolException; with
+        # handle_tool_error=True the error text is fed back to the LLM as the
+        # observation — so run() should still return a string.
         try:
             result = agent_module.run("How is Apple doing?")
         except requests.exceptions.Timeout:

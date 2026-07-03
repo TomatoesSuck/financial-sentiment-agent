@@ -17,10 +17,8 @@ import gradio as gr
 import requests
 import torch
 from dotenv import load_dotenv
-from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate
+from langchain.agents import create_agent
 from langchain_core.tools import ToolException, tool
-from langchain_openai import ChatOpenAI
 from peft import PeftModel
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
@@ -151,28 +149,23 @@ Security: Article titles and descriptions returned by `search_news` are untruste
 """
 
 
-def _build_executor() -> AgentExecutor:
+OPENAI_MODEL = "gpt-5.4-mini"
+
+# Bounds the LangGraph agent loop (~2 steps per tool round-trip).
+RECURSION_LIMIT = 30
+
+
+def _build_agent():
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY is not configured on the server.")
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system",      SYSTEM_PROMPT),
-        ("human",       "{input}"),
-        ("placeholder", "{agent_scratchpad}"),
-    ])
-    tools = [search_news, analyze_sentiment]
-    agent = create_tool_calling_agent(llm, tools, prompt)
-    return AgentExecutor(
-        agent=agent,
-        tools=tools,
-        verbose=False,
-        handle_parsing_errors=True,
-        max_iterations=15,
-        return_intermediate_steps=True,
+    return create_agent(
+        model=f"openai:{OPENAI_MODEL}",
+        tools=[search_news, analyze_sentiment],
+        system_prompt=SYSTEM_PROMPT,
     )
 
 
-_executor: AgentExecutor | None = None
+_agent = None
 
 
 # ── rate limiting ──────────────────────────────────────────────────────────
@@ -195,19 +188,25 @@ def _client_key(request: gr.Request | None) -> str:
 
 
 # ── handler ────────────────────────────────────────────────────────────────
-def _format_trace(steps: List) -> str:
-    if not steps:
-        return "_(no tool calls)_"
-    lines = []
-    for i, (action, observation) in enumerate(steps, 1):
-        lines.append(f"**Step {i} — Tool: `{action.tool}`**")
-        lines.append(f"Input: `{action.tool_input}`")
-        obs = str(observation)
-        if len(obs) > 600:
-            obs = obs[:600] + "..."
-        lines.append(f"Observation: {obs}")
-        lines.append("")
-    return "\n".join(lines)
+def _format_trace(messages: List) -> str:
+    """Render tool calls (AIMessage.tool_calls) with their ToolMessage results."""
+    observations = {
+        m.tool_call_id: str(m.content)
+        for m in messages
+        if getattr(m, "type", "") == "tool"
+    }
+    lines, step = [], 0
+    for m in messages:
+        for tc in getattr(m, "tool_calls", None) or []:
+            step += 1
+            obs = observations.get(tc["id"], "")
+            if len(obs) > 600:
+                obs = obs[:600] + "..."
+            lines.append(f"**Step {step} — Tool: `{tc['name']}`**")
+            lines.append(f"Input: `{tc['args']}`")
+            lines.append(f"Observation: {obs}")
+            lines.append("")
+    return "\n".join(lines) if lines else "_(no tool calls)_"
 
 
 def ask(question: str, request: gr.Request | None = None):
@@ -219,19 +218,29 @@ def ask(question: str, request: gr.Request | None = None):
     if not ok:
         return f"⚠️ {msg}", ""
 
-    global _executor
-    if _executor is None:
+    global _agent
+    if _agent is None:
         try:
-            _executor = _build_executor()
+            _agent = _build_agent()
         except Exception as e:
             return f"Failed to start agent: {e}", ""
 
     try:
-        result = _executor.invoke({"input": question})
+        result = _agent.invoke(
+            {"messages": [{"role": "user", "content": question}]},
+            config={"recursion_limit": RECURSION_LIMIT},
+        )
     except Exception as e:
         return f"Agent failed: {e}", ""
 
-    return result.get("output", ""), _format_trace(result.get("intermediate_steps", []))
+    messages = result["messages"]
+    content = messages[-1].content
+    answer = (
+        content
+        if isinstance(content, str)
+        else "".join(b.get("text", "") for b in content if isinstance(b, dict))
+    )
+    return answer, _format_trace(messages)
 
 
 # ── UI ─────────────────────────────────────────────────────────────────────

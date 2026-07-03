@@ -9,10 +9,9 @@ gradio>=5.0,<6
 # Python 3.13 dropped stdlib `audioop`; pydub (gradio dep) still imports it.
 audioop-lts; python_version >= "3.13"
 # Agent stack
-langchain>=0.3
-langchain-classic>=0.1
-langchain-core>=0.3
-langchain-openai>=0.2
+langchain>=1.0
+langchain-core>=1.0
+langchain-openai>=1.0
 openai>=1.40
 requests>=2.31
 python-dotenv>=1.0
