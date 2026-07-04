@@ -14,6 +14,7 @@ import sys
 from dotenv import load_dotenv
 from langchain.agents import create_agent
 
+from src.observability import langfuse_callbacks
 from src.prompts import SYSTEM_PROMPT
 from src.tools import analyze_sentiment, search_news
 
@@ -54,7 +55,10 @@ def run(question: str) -> str:
         _agent = _build_agent()
     result = _agent.invoke(
         {"messages": [{"role": "user", "content": question}]},
-        config={"recursion_limit": RECURSION_LIMIT},
+        config={
+            "recursion_limit": RECURSION_LIMIT,
+            "callbacks": langfuse_callbacks(),
+        },
     )
     return _final_text(result["messages"])
 
