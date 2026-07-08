@@ -38,3 +38,5 @@ jobs:
             python-dotenv requests pydantic pytest cachetools
       - name: Run tests
         run: pytest tests/ -v
+      - name: Run trajectory evals (skips without OPENAI_API_KEY)
+        run: python -m evals.run_evals

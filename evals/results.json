@@ -1,0 +1,136 @@
+{
+  "model": "gpt-5.4-mini",
+  "passed": 8,
+  "total": 8,
+  "scenarios": [
+    {
+      "scenario": "all_positive",
+      "passed": true,
+      "checks": {
+        "news_called_first": true,
+        "sentiment_once_per_article": true,
+        "answer_nonempty": true,
+        "answer_mentions_distribution": true
+      },
+      "timeline": [
+        "search_news",
+        "analyze_sentiment",
+        "analyze_sentiment",
+        "analyze_sentiment"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "all_negative",
+      "passed": true,
+      "checks": {
+        "news_called_first": true,
+        "sentiment_once_per_article": true,
+        "answer_nonempty": true,
+        "answer_mentions_distribution": true
+      },
+      "timeline": [
+        "search_news",
+        "analyze_sentiment",
+        "analyze_sentiment",
+        "analyze_sentiment"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "mixed_sentiment",
+      "passed": true,
+      "checks": {
+        "news_called_first": true,
+        "sentiment_once_per_article": true,
+        "answer_nonempty": true,
+        "answer_mentions_distribution": true
+      },
+      "timeline": [
+        "search_news",
+        "analyze_sentiment",
+        "analyze_sentiment",
+        "analyze_sentiment",
+        "analyze_sentiment"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "single_article",
+      "passed": true,
+      "checks": {
+        "news_called_first": true,
+        "sentiment_once_per_article": true,
+        "answer_nonempty": true
+      },
+      "timeline": [
+        "search_news",
+        "analyze_sentiment"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "ten_articles",
+      "passed": true,
+      "checks": {
+        "news_called_first": true,
+        "sentiment_once_per_article": true,
+        "answer_nonempty": true,
+        "answer_mentions_distribution": true
+      },
+      "timeline": [
+        "search_news",
+        "analyze_sentiment",
+        "analyze_sentiment",
+        "analyze_sentiment",
+        "analyze_sentiment",
+        "analyze_sentiment",
+        "analyze_sentiment",
+        "analyze_sentiment",
+        "analyze_sentiment",
+        "analyze_sentiment",
+        "analyze_sentiment"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "empty_news_short_circuit",
+      "passed": true,
+      "checks": {
+        "news_called_first": true,
+        "no_sentiment_calls": true,
+        "answer_says_no_news": true
+      },
+      "timeline": [
+        "search_news"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "sentiment_service_timeout",
+      "passed": true,
+      "checks": {
+        "news_called_first": true,
+        "answer_nonempty": true
+      },
+      "timeline": [
+        "search_news",
+        "analyze_sentiment",
+        "analyze_sentiment"
+      ],
+      "error": null
+    },
+    {
+      "scenario": "newsapi_down",
+      "passed": true,
+      "checks": {
+        "no_sentiment_calls": true,
+        "answer_nonempty": true
+      },
+      "timeline": [
+        "search_news"
+      ],
+      "error": null
+    }
+  ]
+}
