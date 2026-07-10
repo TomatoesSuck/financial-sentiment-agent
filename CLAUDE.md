@@ -27,11 +27,17 @@ financial-sentiment-agent/
 ├── spaces/
 │   └── app.py              # Gradio app for HuggingFace Spaces
 ├── src/                    # Agent
-│   ├── agent.py            # AgentExecutor + tool registration
+│   ├── agent.py            # create_agent (LangGraph) + REPL
 │   ├── tools.py            # search_news, analyze_sentiment
+│   ├── observability.py    # optional Langfuse tracing (env-gated)
 │   └── prompts.py          # SYSTEM_PROMPT
+├── evals/
+│   └── run_evals.py        # 8 trajectory scenarios → evals/results.json
+├── mcp_server/
+│   └── server.py           # MCP stdio server wrapping /predict
 ├── tests/
-│   └── test_agent.py       # pytest with mocked tools
+│   ├── test_agent.py       # pytest with mocked tools
+│   └── test_mcp_server.py  # MCP tool listing + E2E call
 ├── checkpoints/lora/       # adapter_model.safetensors + adapter_config.json (generated)
 ├── outputs/                # confusion_matrix.png, calibration_curve.png, *.json (generated)
 ├── .env.example            # OPENAI_API_KEY, NEWS_API_KEY, SENTIMENT_SERVICE_URL
@@ -55,9 +61,11 @@ financial-sentiment-agent/
 | API | FastAPI + uvicorn |
 | Container | Docker (`python:3.10-slim`) |
 | Public demo | HuggingFace Spaces + Gradio |
-| Agent framework | LangChain (`AgentExecutor`, ReAct style) |
+| Agent framework | LangChain 1.0 (`create_agent`, LangGraph runtime) |
 | News source | NewsAPI |
-| LLM | OpenAI API (`gpt-4o-mini`) |
+| LLM | OpenAI API (`gpt-5.4-mini`) |
+| Observability | Langfuse (optional, enabled only when `LANGFUSE_*` keys set) |
+| MCP | official MCP Python SDK (FastMCP, stdio) |
 | Testing | pytest + `unittest.mock` |
 | Runtime | Python 3.10/3.11, venv |
 
@@ -123,11 +131,13 @@ The agent calls Project 1's FastAPI. **Do not re-implement sentiment logic.**
   POSTs to `SENTIMENT_SERVICE_URL/predict`. Returns the full response JSON. `timeout=10s`. Raises a descriptive error on failure.
 
 ### Agent (`src/agent.py`)
-- LangChain `AgentExecutor`, ReAct-style reasoning, agent decides tool order autonomously.
-- Model: `gpt-4o-mini`. Reads `OPENAI_API_KEY` from env.
-- `verbose=True` in development, `verbose=False` in production.
+- LangChain 1.0 `create_agent` (compiles to a LangGraph graph); the agent decides tool order autonomously, bounded by `recursion_limit=30`.
+- Model: `gpt-5.4-mini`. Reads `OPENAI_API_KEY` from env.
+- Optional Langfuse tracing via `src/observability.py` — callbacks only when `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` are set; silent no-op otherwise.
 - Entry point: `run(question: str) → str`.
 - File ends with `if __name__ == "__main__":` REPL — input `quit` to exit.
+- Trajectory evals in `evals/run_evals.py` (8 scenarios, mocked HTTP + real LLM) are the behavioral gate; `tests/` is the regression gate. Both skip cleanly without `OPENAI_API_KEY`.
+- `mcp_server/server.py` exposes `analyze_sentiment` over MCP stdio; it wraps the FastAPI `/predict` and must not duplicate model loading.
 
 ### System Prompt (`src/prompts.py`)
 Instructs the agent to:
@@ -147,6 +157,9 @@ Copy `.env.example` to `.env`:
 OPENAI_API_KEY=
 NEWS_API_KEY=
 SENTIMENT_SERVICE_URL=http://localhost:8000
+LANGFUSE_PUBLIC_KEY=   # optional — tracing off when empty
+LANGFUSE_SECRET_KEY=
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
 ```
 
 Never commit `.env`. The `.gitignore` excludes it.
@@ -175,8 +188,10 @@ source .venv/bin/activate
 docker build -t fin-sentiment . && docker run -p 8000:8000 fin-sentiment
 
 # ── Project 2: agent ──
-.venv/bin/python src/agent.py   # interactive REPL
-.venv/bin/pytest tests/ -v      # mocked tests, no live HTTP
+.venv/bin/python -m src.agent          # interactive REPL
+.venv/bin/pytest tests/ -v             # mocked tests, no live HTTP
+.venv/bin/python -m evals.run_evals    # trajectory evals → evals/results.json
+.venv/bin/python mcp_server/server.py  # MCP stdio server (needs the API running)
 ```
 
 ---

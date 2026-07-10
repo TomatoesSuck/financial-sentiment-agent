@@ -3,7 +3,7 @@
 Two-stage portfolio project:
 
 1. **Model** — DistilBERT fine-tuned with LoRA on [FinancialPhraseBank](https://www.kaggle.com/datasets/ankurzing/sentiment-analysis-for-financial-news) (4,846 sentences, 50% annotator agreement) for 3-class sentiment classification (positive / negative / neutral). Served as a FastAPI REST endpoint, containerised with Docker, deployed publicly on HuggingFace Spaces.
-2. **Agent** — A LangChain agent (`gpt-4o-mini`, tool-calling) that answers financial questions by orchestrating two tools: `search_news` (NewsAPI) and `analyze_sentiment` (the fine-tuned model from stage 1, called over HTTP).
+2. **Agent** — A LangChain 1.0 agent (`create_agent` on the LangGraph runtime, `gpt-5.4-mini`) that answers financial questions by orchestrating two tools: `search_news` (NewsAPI) and `analyze_sentiment` (the fine-tuned model from stage 1, called over HTTP).
 
 The two stages share one contract: stage-2 consumes stage-1 via its `/predict` endpoint. The sentiment logic is **not** duplicated inside the agent — it lives behind a service boundary.
 
@@ -66,6 +66,9 @@ flowchart LR
     G --> H[Docker\npython:3.10-slim, CPU torch]
     G --> I[HuggingFace Spaces\nGradio]
     G --> J[LangChain Agent\nsearch_news + analyze_sentiment]
+    G --> K[MCP server\nstdio, any MCP client]
+    J --> L[Langfuse traces\noptional]
+    J --> M[evals\n8 trajectory scenarios]
 ```
 
 ---
@@ -118,14 +121,14 @@ POST /predict
 
 ## Agent
 
-A LangChain agent (`gpt-4o-mini`, tool-calling style) orchestrates two tools:
+A LangChain 1.0 agent — `langchain.agents.create_agent`, which compiles to a LangGraph graph — uses `gpt-5.4-mini` to orchestrate two tools:
 
 - `search_news(query)` — NewsAPI fetch, up to 10 recent articles
 - `analyze_sentiment(text)` — POST to the FastAPI `/predict` endpoint above
 
 The system prompt enforces: always call `search_news` first; call `analyze_sentiment` once per relevant article; aggregate the sentiment distribution; cite article titles in the final answer; respond "could not find" if news search returns empty.
 
-Tool failures (timeouts, upstream errors) are wrapped as `ToolException` with `handle_tool_error=True`, so the agent reports a graceful answer to the user instead of crashing.
+Tool failures (timeouts, upstream errors) are wrapped as `ToolException` with `handle_tool_error=True`, so the agent reports a graceful answer to the user instead of crashing. The agent loop is bounded by a LangGraph recursion limit (30), so a misbehaving run cannot spin indefinitely.
 
 ### Example interaction
 
@@ -137,6 +140,35 @@ Tool failures (timeouts, upstream errors) are wrapped as `ToolException` with `h
 > - "How Smart Is Apple Intelligence? I Tried Every Feature"
 
 Tests under `tests/test_agent.py` mock the HTTP boundaries and run the agent against real OpenAI to verify the orchestration policy (happy path / empty-news short-circuit / sentiment-service timeout). All three pass.
+
+### Trajectory evals
+
+`evals/run_evals.py` checks the agent's *behaviour*, not just its output: 8 scenarios (mixed sentiment, empty news, sentiment-service timeout, NewsAPI outage, 1–10 article counts) run against the real LLM with mocked HTTP boundaries. Each scenario asserts properties of the tool-call trajectory:
+
+- `search_news` is always called before any sentiment scoring
+- `analyze_sentiment` runs once per retrieved article (small tolerance for retries)
+- empty news short-circuits: no sentiment calls, an explicit "no news found" answer
+- upstream failures (timeout, NewsAPI down) degrade to a graceful answer, never a crash
+
+Per-scenario pass/fail plus the actual tool-call sequence are written to `evals/results.json`; the committed copy is from a real run (8/8 passed). Division of labor: `tests/` is the regression gate, `evals/` measures policy adherence.
+
+```bash
+.venv/bin/python -m evals.run_evals   # skips cleanly without OPENAI_API_KEY
+```
+
+### Observability
+
+Agent runs are traced with [Langfuse](https://langfuse.com) when `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` are set (see `.env.example`): every LLM call, tool invocation, token count and cost lands in one trace tree per question. Without keys the callback list is empty and the agent behaves exactly the same — no account needed to run the repo.
+
+### MCP server
+
+`mcp_server/server.py` exposes `analyze_sentiment` over the [Model Context Protocol](https://modelcontextprotocol.io) (stdio), so any MCP client — Claude Code, Claude Desktop, etc. — can score financial text with the fine-tuned model:
+
+```bash
+claude mcp add financial-sentiment -- <repo>/.venv/bin/python <repo>/mcp_server/server.py
+```
+
+It is a thin wrapper over the same FastAPI `/predict` endpoint — sentiment logic stays behind the one service contract.
 
 ---
 
@@ -179,8 +211,11 @@ curl -X POST http://localhost:8000/predict \
 ├── src/                    # LangChain agent
 │   ├── tools.py            # search_news, analyze_sentiment
 │   ├── prompts.py          # SYSTEM_PROMPT
-│   └── agent.py            # AgentExecutor + REPL
-├── tests/test_agent.py     # 3 mocked scenarios
+│   ├── observability.py    # optional Langfuse tracing (env-gated)
+│   └── agent.py            # create_agent (LangGraph) + REPL
+├── evals/                  # trajectory evals: run_evals.py → results.json
+├── mcp_server/server.py    # MCP stdio server over /predict
+├── tests/                  # agent orchestration + MCP server tests
 ├── checkpoints/lora/       # adapter weights (3.4 MB) — generated
 └── outputs/                # confusion_matrix.png, calibration_curve.png, *_results.json — generated
 ```
@@ -214,8 +249,11 @@ Run the API and the agent:
 # Terminal B: agent REPL
 .venv/bin/python -m src.agent
 
-# Tests (3 mocked scenarios; needs OPENAI_API_KEY)
+# Tests (agent scenarios need OPENAI_API_KEY; skip cleanly without)
 .venv/bin/pytest tests/ -v
+
+# Trajectory evals → evals/results.json
+.venv/bin/python -m evals.run_evals
 ```
 
 A `.env.example` lists the three environment variables (`OPENAI_API_KEY`, `NEWS_API_KEY`, `SENTIMENT_SERVICE_URL`); copy to `.env` and fill in.
