@@ -31,3 +31,6 @@ Process.md
 # Superpowers plans + Word docs — local working artifacts, never commit
 docs/superpowers/
 *.docx
+
+# Agent instructions — local only, not part of the published repo
+CLAUDE.md
